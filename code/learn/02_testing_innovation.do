@@ -1,0 +1,85 @@
+********************************************************************************
+/* Script 08: Structural Innovation Models (Arrow vs. Schumpeter)
+   Logic: Tests whether dominant firms innovate incrementally and if 
+          congestion disproportionately stifles small firms.
+*/
+********************************************************************************
+clear all
+cls
+cd "/if/research-eme/omar/Harun/code"
+
+do "00_initialize.do" "08_structural_innovation_models"
+
+use "$clean/master_regression_file_repaired.dta", clear
+gen log_internal_quality = log(total_5y_citations + sqrt(total_5y_citations^2 + 1))
+
+* Base categories set to Middle group (2)
+fvset base 2 firm_size_bin
+fvset base 2 firm_size_bin_quartile
+
+* ==============================================================================
+* TEST 1: Radical / Breakthrough Innovation Test (Quality ~ Size)
+* ==============================================================================
+* Baseline (Deciles: p10 vs Middle 80% vs p90)
+reghdfe log_internal_quality i.firm_size_bin, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t1_mean_p90
+reghdfe is_breakthrough i.firm_size_bin, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t1_tail_p90
+
+* Robustness (Quartiles: p25 vs Middle 50% vs p75)
+reghdfe log_internal_quality i.firm_size_bin_quartile, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t1_mean_p75
+reghdfe is_breakthrough i.firm_size_bin_quartile, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t1_tail_p75
+
+esttab t1_mean_p90 t1_mean_p75 t1_tail_p90 t1_tail_p75 using ///
+    "$output/baseline_regressions/csvs/structural_quality.csv", replace ///
+    mtitle("Mean (p90)" "Mean (p75)" "Tail (p90)" "Tail (p75)") ///
+    cells(b(star fmt(3)) se(par fmt(3))) star(* 0.10 ** 0.05 *** 0.01) stats(N r2)
+
+* ==============================================================================
+* TEST 2: Patent Thicket Test (Renewal ~ Quality * Size)
+* ==============================================================================
+* Decile Models (Window 1 and Window 3)
+reghdfe ren1 c.log_internal_quality##i.firm_size_bin small_entity, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t2_w1_p90
+reghdfe ren3 c.log_internal_quality##i.firm_size_bin small_entity, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t2_w3_p90
+
+* Quartile Models (Window 1 and Window 3)
+reghdfe ren1 c.log_internal_quality##i.firm_size_bin_quartile small_entity, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t2_w1_p75
+reghdfe ren3 c.log_internal_quality##i.firm_size_bin_quartile small_entity, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t2_w3_p75
+
+* ==============================================================================
+* TEST 3: Congestion Insulation Test (Renewal ~ HHI * Size / Flow * Size)
+* ==============================================================================
+* Decile Models
+reghdfe ren1 c.log_hhi1_class##i.firm_size_bin log_internal_quality small_entity, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t3_hhi_p90
+reghdfe ren1 c.flowq1_class##i.firm_size_bin log_internal_quality small_entity, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t3_flow_p90
+
+* Quartile Models
+reghdfe ren1 c.log_hhi1_class##i.firm_size_bin_quartile log_internal_quality small_entity, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t3_hhi_p75
+reghdfe ren1 c.flowq1_class##i.firm_size_bin_quartile log_internal_quality small_entity, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t3_flow_p75
+
+* ==============================================================================
+* TEST 4: Micro Threat Vulnerability (Renewal ~ Clones * Size)
+* ==============================================================================
+* Do direct clones kill small firms but bounce off big firm thickets?
+
+* Decile Model
+reghdfe ren1 c.log_clone_count1##i.firm_size_bin_decile log_internal_quality small_entity, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t4_clone_p90
+
+* Quartile Model
+reghdfe ren1 c.log_clone_count1##i.firm_size_bin_quartile log_internal_quality small_entity, absorb(cpc_class grant_year) vce(cluster assignee_id)
+eststo t4_clone_p75
+
+esttab t2_w1_p90 t2_w1_p75 t2_w3_p90 t2_w3_p75 t3_hhi_p90 t3_hhi_p75 t3_flow_p90 t3_flow_p75 using ///
+    "$output/baseline_regressions/csvs/structural_behavior.csv", replace ///
+    cells(b(star fmt(3)) se(par fmt(3))) star(* 0.10 ** 0.05 *** 0.01) stats(N r2)

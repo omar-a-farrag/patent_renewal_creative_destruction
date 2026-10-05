@@ -1,0 +1,52 @@
+********************************************************************************
+/* Master Initialization Script
+   Updates: Added 5% Sample Flag and Directory
+*/
+********************************************************************************
+clear all
+set more off
+
+* --- USER SELECTION ---
+local user = 1 // 1 = Omar, 2 = Harun
+global use_sample = 1 // 1 = Use 5% Sample for debugging; 0 = Use Full Data
+
+if `user' == 1 {
+    global project_root "Z:/prod-eme/usr/omar/Research/Harun"
+}
+else if `user' == 2 {
+    global project_root "C:/Users/Harun/Research/PatentProject" 
+}
+
+* --- DIRECTORY DEFINITIONS ---
+global data     "$project_root/data"
+global raw_full "$data/raw"
+global sample   "$data/sample"  // New folder for 5% samples
+
+* Automatically point $raw to the correct source based on the flag
+if $use_sample == 1 {
+    global raw "$sample"
+}
+else {
+    global raw "$raw_full"
+}
+
+global clean    "$data/clean"
+global for_regs "$data/for_regs"
+global output   "$project_root/output"
+global logs     "$project_root/code/build/logs"
+
+* Ensure directories exist
+foreach dir in "$sample" "$clean" "$for_regs" "$logs" "$output" {
+    capture mkdir "`dir'"
+}
+
+* --- DYNAMIC LOGGING SETUP ---
+args calling_file
+if "`calling_file'" != "" {
+    capture log close
+    local c_date = subinstr("`c(current_date)'", " ", "_", .)
+    log using "$logs/`calling_file'_`c_date'.log", replace
+}
+
+di ">>> Initialization Complete. User `user' | Sample Flag: $use_sample"
+di ">>> Raw data path currently set to: $raw"

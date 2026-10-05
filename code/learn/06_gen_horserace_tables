@@ -1,0 +1,132 @@
+import pandas as pd
+import os
+import subprocess
+from collections import defaultdict
+
+CLUSTER_MODE = 3
+
+if CLUSTER_MODE == 1:
+    suffix = ""
+    out_folder = "tech_level_cluster"
+    title_suffix = "Clustered by Tech Level"
+elif CLUSTER_MODE == 2:
+    suffix = "_twoway"
+    out_folder = "twoway_cluster"
+    title_suffix = "Two-Way Clustered (Tech & Year)"
+elif CLUSTER_MODE == 3:
+    suffix = "_assignee"
+    out_folder = "assignee_cluster"
+    title_suffix = "Clustered by Assignee"
+
+results_path = "/if/research-eme/omar/Harun/output/baseline_regressions/csvs"
+output_path = f"/if/research-eme/omar/Harun/output/baseline_regressions/tables/horserace/{out_folder}"
+
+def escape_latex(text):
+    if not isinstance(text, str): text = str(text)
+    text = text.replace('="', '').replace('"', '')
+    if text.startswith('='): text = text[1:]
+    text = text.replace('_', r'\_').replace('%', r'\%').replace('&', r'\&')
+    
+    rename_dict = {
+        r'log\_internal\_quality': 'Log Internal Quality',
+        r'small\_entity': 'Small Entity',
+        r'is\_small': 'Small Entity', # Fallback
+        r'\_cons': 'Constant',
+        'Obs': 'Observations',
+        'R2': '$R^2$'
+    }
+    if text in rename_dict: return rename_dict[text]
+        
+    # Standard Map (Incumbents)
+    if text.startswith(r'log\_avgq'): return 'Incumbent Average Quality'
+    if text.startswith(r'log\_medq'): return 'Incumbent Median Quality'
+    if text.startswith(r'log\_flowq'): return 'Incumbent Flow Volume'
+    if text.startswith(r'log\_hhi'): return 'Incumbent HHI'
+    
+    # New Entrant Map
+    if text.startswith(r'log\_new\_avgq'): return 'New Entrant Average Quality'
+    if text.startswith(r'log\_new\_medq'): return 'New Entrant Median Quality'
+    if text.startswith(r'log\_new\_flowq'): return 'New Entrant Flow Volume'
+    if text.startswith(r'log\_new\_hhi'): return 'New Entrant HHI'
+    
+    # Dyad Map (Incumbents)
+    if text.startswith(r'log\_overlap\_count'): return 'Incumbent Overlap Volume'
+    if text.startswith(r'log\_clone\_count'): return 'Incumbent Clone Count'
+    if text.startswith(r'log\_clone\_avgq'): return 'Incumbent Clone Avg Quality'
+    if r'c.log\_clone\_count' in text and '#' in text: return 'Incumbent Clone Count $\\times$ Avg Quality'
+
+    # Dyad Map (New Entrants)
+    if text.startswith(r'log\_new\_overlap\_count'): return 'New Entrant Overlap Volume'
+    if text.startswith(r'log\_new\_clone\_count'): return 'New Entrant Clone Count'
+    if text.startswith(r'log\_new\_clone\_avgq'): return 'New Entrant Clone Avg Quality'
+    if r'c.log\_new\_clone\_count' in text and '#' in text: return 'New Entrant Clone Count $\\times$ Avg Quality'
+    
+    return text
+
+def get_spec_legend():
+    return f"""
+    \\begin{{flushleft}}
+    \\footnotesize
+    \\textbf{{Notes:}} Internal quality and Small Entity status are controlled for in all specifications. 
+    Standard errors are reported in parentheses. Significance levels: * $p < 0.1$, ** $p < 0.05$, *** $p < 0.01$. \\\\
+    (1-8) Specification details follow previous formatting, closing with Two-Way Fixed Effects and Assignee-level standard errors in Model (8). \\\\
+    \\vspace{{0.2cm}}
+    \\textbf{{Horse Race Interpretation:}} These models include both the "Incumbent" (historical active stock) and "New Entrant" (recently granted patents) metrics in the same specification to isolate the dominant competitive effect on the focal patent's renewal decision.
+    \\end{{flushleft}}
+    """
+
+def create_pdf(tex_content, output_filename, target_dir):
+    template = r"""
+    \documentclass{article}
+    \usepackage[utf8]{inputenc}
+    \usepackage{booktabs}
+    \usepackage{geometry}
+    \usepackage{caption}
+    \geometry{letterpaper, margin=0.5in, landscape}
+    \begin{document}
+    \centering
+    %CONTENT%
+    \end{document}
+    """
+    final_tex = template.replace('%CONTENT%', tex_content)
+    if not os.path.exists(target_dir): os.makedirs(target_dir)
+    tex_file = os.path.join(target_dir, f"{output_filename}.tex")
+    with open(tex_file, "w") as f: f.write(final_tex)
+    try:
+        subprocess.run(["pdflatex", "-interaction=nonstopmode", "-output-directory", target_dir, tex_file], check=True, capture_output=True)
+        print(f"Compiled {output_filename}.pdf")
+    except: pass
+
+def process_results():
+    if not os.path.exists(results_path): return
+
+    for file in os.listdir(results_path):
+        if file.startswith("reg_horserace_") and file.endswith(f"{suffix}.csv"):
+            df = pd.read_csv(os.path.join(results_path, file))
+            
+            new_headers = [escape_latex(df.columns[0])] + [f"({i})" for i in range(1, len(df.columns))]
+            df.columns = new_headers
+            df = df.fillna("").map(escape_latex)
+            df = df[~df.iloc[:, 0].isin(['ren1', 'ren2', 'ren3', 'b/se'])]
+            
+            m_name_raw = file.replace("reg_horserace_", "").replace(".csv", "").upper()
+            if suffix: m_name_raw = m_name_raw.replace(suffix.upper(), "")
+            m_name_clean = escape_latex(m_name_raw)
+            
+            styler = df.style.hide(axis='index')
+            raw_tabular = styler.to_latex(column_format="l" + "c" * (len(df.columns) - 1), hrules=True)
+            
+            tex_fragment = f"""
+            \\begin{{table}}[h!]
+            \\centering \\small
+            \\caption*{{\\Large \\textbf{{Incumbents vs. New Entrants: {m_name_clean}}} \\\\ \\vspace{{0.1cm}} \\normalsize \\textit{{{title_suffix}}}}}
+            \\vspace{{0.2cm}}
+            \\resizebox{{\\textwidth}}{{!}}{{{raw_tabular}}}
+            \\end{{table}}
+            """
+            
+            full_content = tex_fragment + get_spec_legend()
+            create_pdf(full_content, f"Table_{m_name_raw}", output_path)
+
+if __name__ == "__main__":
+    process_results()

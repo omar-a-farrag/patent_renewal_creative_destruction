@@ -1,0 +1,72 @@
+********************************************************************************
+/* Script 06: Expanded Robustness Panel
+   Logic: Runs 7 specifications per measure across 3 renewal windows.
+*/
+********************************************************************************
+clear all
+cls
+* 0. Adjust current directory as needed in order to run intilization script
+cd "Z:/research-eme/omar/Harun/code"
+
+do "00_initialize.do" "06_regressions"
+
+use "$for_regs/master_regression_file.dta", clear
+gen log_internal_quality = log(total_5y_citations + sqrt(total_5y_citations^2 + 1))
+local controls "log_internal_quality is_small"
+
+foreach w in 1 2 3 {
+    local dv ren`w'
+	preserve
+        * SUBSETTING: Only analyze patents that have actually reached the decision point
+        * 12-year renewal (ren3) only for patents granted <= 2013 (assuming 2025 data)
+        if `w' == 3 {
+			drop if grant_year > 2013
+		}
+        if `w' == 2 {
+			drop if grant_year > 2017
+		}
+		
+    local measures "avgq`w' medq`w' flowq`w' hhi`w' overlap`w'"
+    
+    foreach m of local measures {
+        foreach lvl in class cluster {
+            * Skip redundant overlap/cluster runs to save time
+            if "`m'" == "overlap`w'" & "`lvl'" == "cluster" continue
+            
+            local var "log_`m'_`lvl'"
+            if "`m'" == "overlap`w'" local var "log_`m'"
+            local cl_var = cond("`lvl'"=="class", "cpc_class", "cpc_cluster")
+            
+            est clear
+            di ">>> Running Panel: `dv' on `var' (`lvl' level)..."
+
+            * 1. OLS + controls
+            eststo s1: reg `dv' `var' `controls'
+            
+            * 2. OLS + controls, robust SEs
+            eststo s2: reg `dv' `var' `controls', vce(robust)
+            
+            * 3. Level FE (Absorb), robust SEs
+            eststo s3: areg `dv' `var' `controls', absorb(`cl_var') vce(robust)
+            
+            * 4. Year FE (Absorb), robust SEs
+            eststo s4: areg `dv' `var' `controls', absorb(grant_year) vce(robust)
+            
+            * 5. Dual FE (Level & Year), robust SEs
+            eststo s5: reghdfe `dv' `var' `controls', absorb(`cl_var' grant_year) vce(robust)
+            
+            * 6. Level FE (Absorb), cluster SEs by Year
+            eststo s6: areg `dv' `var' `controls', absorb(`cl_var') vce(cluster grant_year)
+            
+            * 7. Year FE (Absorb), cluster SEs by Level
+            eststo s7: areg `dv' `var' `controls', absorb(grant_year) vce(cluster `cl_var')
+
+            * Export for Python Formatter
+            esttab s* using "$output/baseline_regressions/csvs/reg_`m'_`lvl'.csv", replace ///
+                cells(b(star fmt(3)) se(par fmt(3))) ///
+                stats(N r2, labels("Obs" "R2")) keep(`var' `controls')
+        }
+    }
+	restore
+}
+log close
